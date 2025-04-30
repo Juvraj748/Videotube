@@ -55,7 +55,8 @@ const userSchema = new Schema(
 
 userSchema.pre("save", async function(next){ // Use pre because we want to run it before saving
     // If password is not being saved or updated, we don't need encrypt it
-    if(!this.modified("password")) next() 
+    // Fixed while creating register api
+    if(!this.isModified("password")) next() 
     
     this.password = await bcrypt.hash(this.password, 10)
 
