@@ -3,6 +3,28 @@ import {asyncHandler} from "../utils/asyncHandler.js"
 import { User } from "../models/user.models.js" 
 import { deleteFromCloudinary, uploadOnCloudinary } from "../utils/cloudinary.js"
 import { ApiResponse } from "../utils/apiResponse.js"
+import jwt from "jsonwebtoken"
+
+// Helper function
+const generateRefreshAndAccessToken = async (userId) => {
+    try {
+        const user = await User.findById(userId)
+        if(!user){
+            throw new ApiError(404, "User not found!");
+        }
+    
+        const accessToken = user.generateAccesstoken()
+        const refreshToken = user.generateRefreshtoken()
+    
+        user.refreshToken = refreshToken
+        await user.save({validateBeforeSave: true})
+    
+        return {accessToken, refreshToken}
+    } catch (error) {
+        console.log("Error while generating tokens. Error:", error);
+        throw new ApiError(500, "Error while generating refresh/access token");
+    }
+}
 
 const registerUser = asyncHandler(async (req, res) => {
     const {fullname, email, username, password} = req.body
@@ -70,10 +92,102 @@ const registerUser = asyncHandler(async (req, res) => {
         }
 
         throw new ApiError(500, "Something went wrong while creating user and images were deleted")
-
     }
 })
 
+const loginUser = asyncHandler(async(req, res) => {
+    const { username, email, password } = req.body
+
+    if(!email){
+        throw new ApiError(400, "Email required for login");
+    }
+
+    const user = await User.findOne({
+        $or: [{username}, {email}]
+    })
+
+    if(!user){
+        throw new ApiError(409, "User not found", )
+    }
+
+    const validPassword = await user.isPasswordCorrect(password)
+    if(!validPassword){
+        throw new ApiError(401, "Invalid credentials");
+    }
+
+    const {refreshToken, accessToken} = await generateRefreshAndAccessToken(user._id)
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken")
+
+    if(!loggedInUser){
+        throw new ApiError(400, "Unexpected error during login! Please try again.");
+    }
+
+    const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production"
+    }
+
+    return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(new ApiResponse({statusCode: 200, 
+        data: {user: loggedInUser, refreshToken, accessToken}, 
+        message: "User logged in succesfully"}
+    ))
+})
+
+const refreshAccessToken = asyncHandler(async (req, res) => {
+    const incomingRefreshtoken = req.cookies.refreshToken || res.body.refreshToken
+    if(!incomingRefreshtoken){
+        throw new ApiError(401, "Refresh token is required")
+    }
+
+    try {
+        const decodedToken = jwt.verify(incomingRefreshtoken, process.env.REFRESH_TOKEN_SECRET)
+        const user = await User.findById(decodedToken?._id)
+
+        if(!user){
+            throw new ApiError(401, "Invalid refresh token")
+        }
+
+        if(incomingRefreshtoken !== user?.refreshToken){
+            throw new ApiError(401, "Invalid refresh token")
+        }
+
+        const options = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production"
+        }
+
+        const {refreshToken: newRefreshToken, accessToken} = await generateRefreshAndAccessToken(user._id)
+
+        return res
+           .status(200)
+           .cookie("accessToken", accessToken)
+           .cookie("refreshToken", newRefreshToken)
+           .json(
+              new ApiResponse({
+                 statusCode: 200,
+                 data: { refreshToken: newRefreshToken, accessToken },
+                 message: "Access token refreshed successfully",
+              })
+           );
+
+    } catch (err) {
+        throw new ApiError(500, "Somethin went wrong while generating accessToken")
+    }
+})
+
+const logout = asyncHandler(async (req, res) => {
+    // For some reason we can't just do "id = req.body._id"
+    await User.findByIdAndUpdate(
+        // need to come back here after middleware
+    )
+})
+
 export {
-    registerUser
+    registerUser,
+    loginUser,
+    refreshAccessToken
 }
