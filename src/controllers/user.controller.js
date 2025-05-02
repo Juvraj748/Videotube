@@ -179,15 +179,42 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     }
 })
 
-const logout = asyncHandler(async (req, res) => {
+const logoutUser = asyncHandler(async (req, res) => {
     // For some reason we can't just do "id = req.body._id"
     await User.findByIdAndUpdate(
         // need to come back here after middleware
+        req.user._id, {
+            $set: {
+                refreshToken: ""
+            }
+        },
+        {
+            new: true // return updated data
+        }
     )
+
+    const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production"
+    }
+
+    return res
+       .status(200)
+       .clearCookie("refreshToken", options)
+       .clearCookie("accessToken", options)
+       .json(
+          new ApiResponse({
+             statusCode: 200,
+             message: "Logged out successfully",
+             data: {},
+          })
+       )
+
 })
 
 export {
     registerUser,
     loginUser,
-    refreshAccessToken
+    refreshAccessToken,
+    logoutUser
 }
